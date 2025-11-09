@@ -2,6 +2,7 @@ package com.portfolio.ecommerce.product.service;
 
 import com.portfolio.ecommerce.product.dto.ProductRequest;
 import com.portfolio.ecommerce.product.dto.ProductResponse;
+import com.portfolio.ecommerce.product.exception.InsufficientStockException;
 import com.portfolio.ecommerce.product.exception.ProductNotFoundException;
 import com.portfolio.ecommerce.product.model.Product;
 import com.portfolio.ecommerce.product.repository.ProductRepository;
@@ -14,17 +15,21 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
 @Slf4j
 @Transactional(readOnly = true)
-public class ProductService {
+public class ProductServiceImpl implements ProductService {
 
     private final ProductRepository productRepository;
 
     @Cacheable(value = "products", key = "#id")
+    @Override
     public ProductResponse getProductById(Long id) {
         log.info("Fetching product with id: {}", id);
         Product product = productRepository.findById(id)
@@ -32,12 +37,14 @@ public class ProductService {
         return mapToResponse(product);
     }
 
+    @Override
     public Page<ProductResponse> getAllProducts(Pageable pageable) {
         log.info("Fetching all products with pagination");
         return productRepository.findByActiveTrue(pageable)
                 .map(this::mapToResponse);
     }
 
+    @Override
     public Page<ProductResponse> searchProducts(String search, Pageable pageable) {
         log.info("Searching products with term: {}", search);
         return productRepository.searchProducts(search, pageable)
@@ -46,6 +53,7 @@ public class ProductService {
 
     @Transactional
     @CacheEvict(value = "products", allEntries = true)
+    @Override
     public ProductResponse createProduct(ProductRequest request) {
         log.info("Creating new product: {}", request.getName());
         Product product = Product.builder()
@@ -65,6 +73,7 @@ public class ProductService {
 
     @Transactional
     @CacheEvict(value = "products", key = "#id")
+    @Override
     public ProductResponse updateProduct(Long id, ProductRequest request) {
         log.info("Updating product with id: {}", id);
         Product product = productRepository.findById(id)
@@ -84,6 +93,7 @@ public class ProductService {
 
     @Transactional
     @CacheEvict(value = "products", key = "#id")
+    @Override
     public void deleteProduct(Long id) {
         log.info("Deleting product with id: {}", id);
         Product product = productRepository.findById(id)
@@ -105,5 +115,39 @@ public class ProductService {
                 .createdAt(product.getCreatedAt())
                 .updatedAt(product.getUpdatedAt())
                 .build();
+    }
+
+    // Add to ProductService class
+
+    public List<ProductResponse> getProductsByCategory(String category) {
+        log.info("Fetching products by category: {}", category);
+        return productRepository.findByCategory(category).stream()
+                .map(this::mapToResponse)
+                .toList();
+    }
+
+    public List<String> getAllCategories() {
+        log.info("Fetching all categories");
+        return productRepository.findAllCategories();
+    }
+
+    @Transactional
+    @CacheEvict(value = "products", key = "#id")
+    public ProductResponse updateStock(Long id, Integer quantity) {
+        log.info("Updating stock for product {}: {}", id, quantity);
+
+        Product product = productRepository.findById(id)
+                .orElseThrow(() -> new ProductNotFoundException("Product not found with id: " + id));
+
+        if (quantity < 0 && Math.abs(quantity) > product.getStock()) {
+            throw new InsufficientStockException(
+                    "Insufficient stock. Available: " + product.getStock() + ", Requested: " + Math.abs(quantity));
+        }
+
+        product.setStock(product.getStock() + quantity);
+        Product updatedProduct = productRepository.save(product);
+
+        log.info("Stock updated for product {}: new stock = {}", id, updatedProduct.getStock());
+        return mapToResponse(updatedProduct);
     }
 }
